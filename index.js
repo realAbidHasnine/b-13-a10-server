@@ -72,6 +72,22 @@ async function run() {
         const userCollection = db.collection("user")
         const requestCollection = db.collection("donation_requests")
         const fundingCollection = db.collection("funding")
+
+        // Get active/pending donation requests (Public)
+        app.get("/public-donation-requests",async(req,res)=>{
+            try{
+                const query = {donationStatus: "pending"};
+                const result = await requestCollection.find(query).toArray();
+                res.json(result)
+            }
+            catch(error){
+
+                console.error(error)
+
+                res.status(500).json({ error: "Internal server error" })
+
+            }
+        })
     }
     
     finally{

@@ -567,3 +567,14 @@ async function run() {
   } finally {
   }
 }
+
+run().catch(console.dir);
+
+//---
+app.get("/", (req, res) => {
+  res.send("LifeStream Server is Running!");
+});
+
+app.listen(port, () => {
+  console.log(`LifeStream Server listening on http://localhost:${port}`);
+});

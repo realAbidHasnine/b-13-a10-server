@@ -164,6 +164,23 @@ async function run() {
         }
       },
     );
+
+    // Get all users (Admin Only)
+    app.get("/users", tokenVerify, requireRole("admin"), async (req, res) => {
+      try {
+        const { status } = req.query;
+        let query = {};
+        if (status && status !== "all") {
+          query.status = status;
+        }
+        const result = await userCollection.find(query).toArray();
+        res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+
   } finally {
   }
 }

@@ -509,6 +509,61 @@ async function run() {
         res.status(500).json({ error: "Internal server error" });
       }
     });
+
+    app.get(
+      "/admin-stats",
+      tokenVerify,
+      requireRole("admin", "volunteer"),
+      async (req, res) => {
+        try {
+          const usersCount = await userCollection.countDocuments({
+            role: "donor",
+          });
+          const requestsCount = await requestCollection.countDocuments();
+
+          // Sum total funding
+          const fundsData = await fundingCollection.find().toArray();
+          const totalFunds = fundsData.reduce(
+            (sum, item) => sum + (item.amount || 0),
+            0,
+          );
+
+          //---
+          // Get requests count by day for chart representation using real MongoDB aggregation
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+          const chartRaw = await requestCollection
+            .aggregate([
+              { $match: { createdAt: { $gte: sevenDaysAgo } } },
+              {
+                $group: {
+                  _id: { $dayOfWeek: "$createdAt" },
+                  requests: { $sum: 1 },
+                },
+              },
+              { $sort: { _id: 1 } },
+            ])
+            .toArray();
+
+          const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+          const chartData = chartRaw.map((d) => ({
+            name: dayNames[d._id - 1],
+            requests: d.requests,
+          }));
+
+          res.json({
+            users: usersCount,
+            funds: totalFunds,
+            requests: requestsCount,
+            chartData,
+          });
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ error: "Internal server error" });
+        }
+      },
+    );
   } finally {
   }
 }

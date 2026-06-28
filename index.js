@@ -246,6 +246,30 @@ async function run() {
         res.status(500).json({ error: "Internal server error" });
       }
     });
+
+    app.post("/donation-requests", tokenVerify, async (req, res) => {
+      try {
+        const requestData = { ...req.body, createdAt: new Date() };
+
+        // Block check: verify if the user status is active
+        const user = await userCollection.findOne({
+          email: requestData.requesterEmail,
+        });
+        if (user && user.status === "blocked") {
+          return res
+            .status(403)
+            .json({
+              error: "Blocked users are restricted from creating requests.",
+            });
+        }
+
+        const result = await requestCollection.insertOne(requestData);
+        res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
   } finally {
   }
 }

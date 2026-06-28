@@ -485,6 +485,17 @@ async function run() {
         res.status(500).json({ error: error.message });
       }
     });
+
+    app.post("/funding", tokenVerify, async (req, res) => {
+      try {
+        const fundingData = req.body;
+        const result = await fundingCollection.insertOne(fundingData);
+        res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
   } finally {
   }
 }

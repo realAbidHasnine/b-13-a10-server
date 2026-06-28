@@ -256,14 +256,28 @@ async function run() {
           email: requestData.requesterEmail,
         });
         if (user && user.status === "blocked") {
-          return res
-            .status(403)
-            .json({
-              error: "Blocked users are restricted from creating requests.",
-            });
+          return res.status(403).json({
+            error: "Blocked users are restricted from creating requests.",
+          });
         }
 
         const result = await requestCollection.insertOne(requestData);
+        res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+
+    app.get("/donation-requests/recent", tokenVerify, async (req, res) => {
+      try {
+        const { email } = req.query;
+        const query = { requesterEmail: email };
+        const result = await requestCollection
+          .find(query)
+          .sort({ _id: -1 })
+          .limit(3)
+          .toArray();
         res.json(result);
       } catch (error) {
         console.error(error);

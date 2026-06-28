@@ -111,6 +111,22 @@ async function run() {
                 res.status(500).json({ error: "Internal server error"})
             }
         })
+        
+        // Get current user details (Private)
+        app.get("/users/me",tokenVerify,async (req,res) => {
+            try{
+                const email = req.user.email;
+                const user = await userCollection.findOne({email})
+                if(!user) return res.statusq(404).json({error : "User not found"})
+                res.json(user);
+
+            }
+            catch(error){
+                console.error(error)
+                res.status(500).json({error : "Internal server error"})
+
+            }
+        })
     }
     
     finally{

@@ -360,6 +360,26 @@ async function run() {
         res.status(500).json({ error: "Internal server error" });
       }
     });
+
+    app.patch(
+      "/donation-requests/:id/status",
+      tokenVerify,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { status } = req.body;
+          const filter = { _id: new ObjectId(id) };
+          const updateDoc = {
+            $set: { donationStatus: status },
+          };
+          const result = await requestCollection.updateOne(filter, updateDoc);
+          res.json(result);
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ error: "Internal server error" });
+        }
+      },
+    );
   } finally {
   }
 }

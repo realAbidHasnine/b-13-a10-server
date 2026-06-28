@@ -312,6 +312,39 @@ async function run() {
         res.status(500).json({ error: "Internal server error" });
       }
     });
+
+    app.get(
+      "/donation-requests/all-requests",
+      tokenVerify,
+      requireRole("admin", "volunteer"),
+      async (req, res) => {
+        try {
+          const { status, page = 1, limit = 5 } = req.query;
+          let query = {};
+
+          if (status && status !== "all") {
+            query.donationStatus = status;
+          }
+
+          const skip = (parseInt(page) - 1) * parseInt(limit);
+          const count = await requestCollection.countDocuments(query);
+          const requests = await requestCollection
+            .find(query)
+            .sort({ _id: -1 })
+            .skip(skip)
+            .limit(parseInt(limit))
+            .toArray();
+
+          res.json({
+            requests,
+            totalPages: Math.ceil(count / parseInt(limit)),
+          });
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ error: "Internal server error" });
+        }
+      },
+    );
   } finally {
   }
 }

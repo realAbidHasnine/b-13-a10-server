@@ -439,6 +439,37 @@ async function run() {
         }
       },
     );
+
+    app.delete(
+      "/donation-requests/:id",
+      tokenVerify,
+      requireRole("admin", "donor"),
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+
+          if (req.user.role === "donor") {
+            const existing = await requestCollection.findOne({
+              _id: new ObjectId(id),
+            });
+            if (!existing)
+              return res.status(404).json({ error: "Request not found" });
+            if (existing.requesterEmail !== req.user.email) {
+              return res
+                .status(403)
+                .json({ error: "You can only modify your own requests" });
+            }
+          }
+
+          const query = { _id: new ObjectId(id) };
+          const result = await requestCollection.deleteOne(query);
+          res.json(result);
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ error: "Internal server error" });
+        }
+      },
+    );
   } finally {
   }
 }

@@ -88,6 +88,29 @@ async function run() {
 
             }
         })
+
+        // Search active donors (Public)
+        app.get("/donors",async (req,res) => {
+            try{
+                const { bloodGroup, district,upazila} = req.query
+                let query = {
+                    role: "donor",
+                    status: "active"
+                }
+
+                if(bloodGroup) query.bloodGroup = bloodGroup;
+                if (district) query.district = district;
+                if(upazila) query.upazila = upazila;
+
+                const result = await userCollection.find(query).toArray();
+                res.json(result);
+            }
+            catch(error){
+                console.error(error)
+
+                res.status(500).json({ error: "Internal server error"})
+            }
+        })
     }
     
     finally{

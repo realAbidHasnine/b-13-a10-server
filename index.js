@@ -181,6 +181,27 @@ async function run() {
       }
     });
 
+    // Block/unblock user (Admin Only)
+    app.patch(
+      "/users/:id/status",
+      tokenVerify,
+      requireRole("admin"),
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { status } = req.body;
+          const filter = { _id: id }; 
+          const updateDoc = {
+            $set: { status: status },
+          };
+          const result = await userCollection.updateOne(filter, updateDoc);
+          res.json(result);
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ error: "Internal server error" });
+        }
+      },
+    );
   } finally {
   }
 }

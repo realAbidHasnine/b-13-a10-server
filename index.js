@@ -61,3 +61,20 @@ const requireRole = (...roles) => (req, res, next) => {
   }
   next();
 };
+
+async function run() {
+
+    try{
+        await client.connect();
+        console.log("Connected to MongoDB Atlas!");
+
+        const db = client.db("blooddonation")
+        const userCollection = db.collection("user")
+        const requestCollection = db.collection("donation_requests")
+        const fundingCollection = db.collection("funding")
+    }
+    
+    finally{
+
+    }
+}

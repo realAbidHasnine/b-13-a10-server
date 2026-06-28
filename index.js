@@ -190,7 +190,7 @@ async function run() {
         try {
           const id = req.params.id;
           const { status } = req.body;
-          const filter = { _id: id }; 
+          const filter = { _id: id };
           const updateDoc = {
             $set: { status: status },
           };
@@ -202,6 +202,50 @@ async function run() {
         }
       },
     );
+
+    // Change user role (Admin Only)
+    app.patch(
+      "/users/:id/role",
+      tokenVerify,
+      requireRole("admin"),
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { role } = req.body;
+          const filter = { _id: id }; // Better Auth uses string IDs
+          const updateDoc = {
+            $set: { role: role },
+          };
+          const result = await userCollection.updateOne(filter, updateDoc);
+          res.json(result);
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({ error: "Internal server error" });
+        }
+      },
+    );
+
+    // Update user profile info (Private)
+    app.patch("/users/update-profile", tokenVerify, async (req, res) => {
+      try {
+        const { userId, name, bloodGroup, district, upazila, image } = req.body;
+        const filter = { _id: userId };
+        const updateDoc = {
+          $set: {
+            name,
+            bloodGroup,
+            district,
+            upazila,
+            image,
+          },
+        };
+        const result = await userCollection.updateOne(filter, updateDoc);
+        res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
   } finally {
   }
 }

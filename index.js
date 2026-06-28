@@ -345,6 +345,21 @@ async function run() {
         }
       },
     );
+
+    app.get("/donation-requests/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await requestCollection.findOne(query);
+        if (!result) {
+          return res.status(404).json({ error: "Request not found" });
+        }
+        res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
   } finally {
   }
 }

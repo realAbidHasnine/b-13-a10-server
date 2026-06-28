@@ -15,3 +15,42 @@ const app = express();
 
 app.use(express.json());
 app.use(cors());
+
+const uri = process.env.MONGODB_URI;
+const port = process.env.PORT || 5000;
+
+
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
+
+
+const authServerUrl = process.env.CLIENT_URL || "http://localhost:3000";
+const JWKS = createRemoteJWKSet(new URL(`${authServerUrl}/api/auth/jwks`));
+
+
+// JWT Verification Middleware
+const tokenVerify = async (req, res, next) => {
+  const header = req?.headers.authorization;
+  if (!header) {
+    return res.status(401).json({ message: "Unauthorized: Missing Authorization Header" });
+  }
+
+  const token = header.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized: Missing Token" });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload; 
+    next();
+  } catch (error) {
+    console.error("JWT Verification failed:", error.message);
+    return res.status(403).json({ message: "Forbidden: Invalid Token" });
+  }
+};

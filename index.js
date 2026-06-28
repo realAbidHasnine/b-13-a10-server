@@ -496,6 +496,19 @@ async function run() {
         res.status(500).json({ error: "Internal server error" });
       }
     });
+
+    app.get("/funding", tokenVerify, async (req, res) => {
+      try {
+        const result = await fundingCollection
+          .find()
+          .sort({ _id: -1 })
+          .toArray();
+        res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
   } finally {
   }
 }

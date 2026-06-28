@@ -470,6 +470,21 @@ async function run() {
         }
       },
     );
+
+    app.post("/create-payment-intent", tokenVerify, async (req, res) => {
+      try {
+        const { amount } = req.body;
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(amount * 100), // in cents
+          currency: "usd",
+          payment_method_types: ["card"],
+        });
+        res.json({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        console.error("Stripe payment intent creation error:", error);
+        res.status(500).json({ error: error.message });
+      }
+    });
   } finally {
   }
 }

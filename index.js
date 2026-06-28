@@ -54,3 +54,10 @@ const tokenVerify = async (req, res, next) => {
     return res.status(403).json({ message: "Forbidden: Invalid Token" });
   }
 };
+
+const requireRole = (...roles) => (req, res, next) => {
+  if (!req.user || !roles.includes(req.user.role)) {
+    return res.status(403).json({ message: "Forbidden: Insufficient role" });
+  }
+  next();
+};

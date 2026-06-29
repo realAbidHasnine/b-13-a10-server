@@ -14,7 +14,8 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const app = express();
 
 app.use(express.json());
-app.use(cors());
+const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+app.use(cors({ origin: clientUrl, credentials: true }));
 
 const uri = process.env.MONGODB_URI;
 const port = process.env.PORT || 5000;
@@ -113,7 +114,7 @@ async function run() {
       try {
         const email = req.user.email;
         const user = await userCollection.findOne({ email });
-        if (!user) return res.statusq(404).json({ error: "User not found" });
+        if (!user) return res.status(404).json({ error: "User not found" });
         res.json(user);
       } catch (error) {
         console.error(error);
@@ -155,7 +156,8 @@ async function run() {
       async (req, res) => {
         try {
           const { id } = req.params;
-          const user = await userCollection.findOne({ _id: id });
+          const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id };
+          const user = await userCollection.findOne(filter);
           if (!user) return res.status(404).json({ error: "User not found" });
           res.json(user);
         } catch (error) {
@@ -190,7 +192,7 @@ async function run() {
         try {
           const id = req.params.id;
           const { status } = req.body;
-          const filter = { _id: id };
+          const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id };
           const updateDoc = {
             $set: { status: status },
           };
@@ -212,7 +214,7 @@ async function run() {
         try {
           const id = req.params.id;
           const { role } = req.body;
-          const filter = { _id: id }; // Better Auth uses string IDs
+          const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id }; // Better Auth uses string IDs
           const updateDoc = {
             $set: { role: role },
           };
@@ -229,7 +231,11 @@ async function run() {
     app.patch("/users/update-profile", tokenVerify, async (req, res) => {
       try {
         const { userId, name, bloodGroup, district, upazila, image } = req.body;
-        const filter = { _id: userId };
+        // Ensure user can only update their own profile
+        if (userId !== req.user.id && userId !== req.user.sub) {
+          return res.status(403).json({ error: "You can only update your own profile" });
+        }
+        const filter = ObjectId.isValid(userId) ? { $or: [{ _id: userId }, { _id: new ObjectId(userId) }] } : { _id: userId };
         const updateDoc = {
           $set: {
             name,
@@ -504,6 +510,27 @@ async function run() {
           .sort({ _id: -1 })
           .toArray();
         res.json(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+
+    // Contact form submission (Public)
+    app.post("/contact", async (req, res) => {
+      try {
+        const { name, email, message } = req.body;
+        if (!name || !email || !message) {
+          return res.status(400).json({ error: "All fields are required" });
+        }
+        const contactCollection = db.collection("contact_messages");
+        await contactCollection.insertOne({
+          name,
+          email,
+          message,
+          createdAt: new Date(),
+        });
+        res.json({ success: true, message: "Message received successfully" });
       } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal server error" });

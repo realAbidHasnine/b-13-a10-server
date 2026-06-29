@@ -33,7 +33,22 @@ const client = new MongoClient(uri, {
 const authServerUrl = process.env.CLIENT_URL || "http://localhost:3000";
 const JWKS = createRemoteJWKSet(new URL(`${authServerUrl}/api/auth/jwks`));
 
-// JWT Verification Middleware
+let db;
+let userCollection;
+let requestCollection;
+let fundingCollection;
+
+async function initDb() {
+  if (db) return db;
+  await client.connect();
+  console.log("Connected to MongoDB Atlas!");
+  db = client.db("blooddonation");
+  userCollection = db.collection("user");
+  requestCollection = db.collection("donation_requests");
+  fundingCollection = db.collection("funding");
+  return db;
+}
+
 const tokenVerify = async (req, res, next) => {
   const header = req?.headers.authorization;
   if (!header) {
@@ -66,544 +81,548 @@ const requireRole =
     next();
   };
 
-async function run() {
+// Get active/pending donation requests (Public)
+app.get("/public-donation-requests", async (req, res) => {
+  await initDb();
   try {
-    await client.connect();
-    console.log("Connected to MongoDB Atlas!");
+    const query = { donationStatus: "pending" };
+    const result = await requestCollection.find(query).toArray();
+    res.json(result);
+  } catch (error) {
+    console.error(error);
 
-    const db = client.db("blooddonation");
-    const userCollection = db.collection("user");
-    const requestCollection = db.collection("donation_requests");
-    const fundingCollection = db.collection("funding");
-
-    // Get active/pending donation requests (Public)
-    app.get("/public-donation-requests", async (req, res) => {
-      try {
-        const query = { donationStatus: "pending" };
-        const result = await requestCollection.find(query).toArray();
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    // Search active donors (Public)
-    app.get("/donors", async (req, res) => {
-      try {
-        const { bloodGroup, district, upazila } = req.query;
-        let query = {
-          role: "donor",
-          status: "active",
-        };
-
-        if (bloodGroup) query.bloodGroup = bloodGroup;
-        if (district) query.district = district;
-        if (upazila) query.upazila = upazila;
-
-        const result = await userCollection.find(query).toArray();
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    // Get current user details (Private)
-    app.get("/users/me", tokenVerify, async (req, res) => {
-      try {
-        const email = req.user.email;
-        const user = await userCollection.findOne({ email });
-        if (!user) return res.status(404).json({ error: "User not found" });
-        res.json(user);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    // User registration (Public)
-    app.post("/users", async (req, res) => {
-      try {
-        const { email, name, bloodGroup, district, upazila, image } = req.body;
-        // Check if user already exists (prevent duplicates on page reload)
-        const existing = await userCollection.findOne({ email });
-        if (existing) return res.json({ message: "User already exists" });
-        const newUser = {
-          email,
-          name,
-          bloodGroup,
-          district,
-          upazila,
-          image,
-          role: "donor",
-          status: "active",
-          createdAt: new Date(),
-        };
-        const result = await userCollection.insertOne(newUser);
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    // Get specific user details (Admin Only)
-    app.get(
-      "/users/:id",
-      tokenVerify,
-      requireRole("admin"),
-      async (req, res) => {
-        try {
-          const { id } = req.params;
-          const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id };
-          const user = await userCollection.findOne(filter);
-          if (!user) return res.status(404).json({ error: "User not found" });
-          res.json(user);
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    // Get all users (Admin Only)
-    app.get("/users", tokenVerify, requireRole("admin"), async (req, res) => {
-      try {
-        const { status } = req.query;
-        let query = {};
-        if (status && status !== "all") {
-          query.status = status;
-        }
-        const result = await userCollection.find(query).toArray();
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    // Block/unblock user (Admin Only)
-    app.patch(
-      "/users/:id/status",
-      tokenVerify,
-      requireRole("admin"),
-      async (req, res) => {
-        try {
-          const id = req.params.id;
-          const { status } = req.body;
-          const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id };
-          const updateDoc = {
-            $set: { status: status },
-          };
-          const result = await userCollection.updateOne(filter, updateDoc);
-          res.json(result);
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    // Change user role (Admin Only)
-    app.patch(
-      "/users/:id/role",
-      tokenVerify,
-      requireRole("admin"),
-      async (req, res) => {
-        try {
-          const id = req.params.id;
-          const { role } = req.body;
-          const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id }; // Better Auth uses string IDs
-          const updateDoc = {
-            $set: { role: role },
-          };
-          const result = await userCollection.updateOne(filter, updateDoc);
-          res.json(result);
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    // Update user profile info (Private)
-    app.patch("/users/update-profile", tokenVerify, async (req, res) => {
-      try {
-        const { userId, name, bloodGroup, district, upazila, image } = req.body;
-        // Ensure user can only update their own profile
-        if (userId !== req.user.id && userId !== req.user.sub) {
-          return res.status(403).json({ error: "You can only update your own profile" });
-        }
-        const filter = ObjectId.isValid(userId) ? { $or: [{ _id: userId }, { _id: new ObjectId(userId) }] } : { _id: userId };
-        const updateDoc = {
-          $set: {
-            name,
-            bloodGroup,
-            district,
-            upazila,
-            image,
-          },
-        };
-        const result = await userCollection.updateOne(filter, updateDoc);
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    app.post("/donation-requests", tokenVerify, async (req, res) => {
-      try {
-        const requestData = { ...req.body, createdAt: new Date() };
-
-        // Block check: verify if the user status is active
-        const user = await userCollection.findOne({
-          email: requestData.requesterEmail,
-        });
-        if (user && user.status === "blocked") {
-          return res.status(403).json({
-            error: "Blocked users are restricted from creating requests.",
-          });
-        }
-
-        const result = await requestCollection.insertOne(requestData);
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    app.get("/donation-requests/recent", tokenVerify, async (req, res) => {
-      try {
-        const { email } = req.query;
-        const query = { requesterEmail: email };
-        const result = await requestCollection
-          .find(query)
-          .sort({ _id: -1 })
-          .limit(3)
-          .toArray();
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    app.get("/donation-requests/my-requests", tokenVerify, async (req, res) => {
-      try {
-        const { email, status, page = 1, limit = 5 } = req.query;
-        let query = { requesterEmail: email };
-
-        if (status && status !== "all") {
-          query.donationStatus = status;
-        }
-
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-        const count = await requestCollection.countDocuments(query);
-        const requests = await requestCollection
-          .find(query)
-          .sort({ _id: -1 })
-          .skip(skip)
-          .limit(parseInt(limit))
-          .toArray();
-
-        res.json({
-          requests,
-          totalPages: Math.ceil(count / parseInt(limit)),
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    app.get(
-      "/donation-requests/all-requests",
-      tokenVerify,
-      requireRole("admin", "volunteer"),
-      async (req, res) => {
-        try {
-          const { status, page = 1, limit = 5 } = req.query;
-          let query = {};
-
-          if (status && status !== "all") {
-            query.donationStatus = status;
-          }
-
-          const skip = (parseInt(page) - 1) * parseInt(limit);
-          const count = await requestCollection.countDocuments(query);
-          const requests = await requestCollection
-            .find(query)
-            .sort({ _id: -1 })
-            .skip(skip)
-            .limit(parseInt(limit))
-            .toArray();
-
-          res.json({
-            requests,
-            totalPages: Math.ceil(count / parseInt(limit)),
-          });
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    app.get("/donation-requests/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const query = { _id: new ObjectId(id) };
-        const result = await requestCollection.findOne(query);
-        if (!result) {
-          return res.status(404).json({ error: "Request not found" });
-        }
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    app.patch(
-      "/donation-requests/:id/status",
-      tokenVerify,
-      async (req, res) => {
-        try {
-          const id = req.params.id;
-          const { status } = req.body;
-          const filter = { _id: new ObjectId(id) };
-          const updateDoc = {
-            $set: { donationStatus: status },
-          };
-          const result = await requestCollection.updateOne(filter, updateDoc);
-          res.json(result);
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    app.patch(
-      "/donation-requests/:id/donate",
-      tokenVerify,
-      async (req, res) => {
-        try {
-          const id = req.params.id;
-          const { donorName, donorEmail, donationStatus } = req.body;
-          const filter = { _id: new ObjectId(id) };
-          const updateDoc = {
-            $set: {
-              donorName,
-              donorEmail,
-              donationStatus,
-            },
-          };
-          const result = await requestCollection.updateOne(filter, updateDoc);
-          res.json(result);
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    app.patch(
-      "/donation-requests/:id",
-      tokenVerify,
-      requireRole("admin", "donor"),
-      async (req, res) => {
-        try {
-          const id = req.params.id;
-          const updates = req.body;
-
-          if (req.user.role === "donor") {
-            const existing = await requestCollection.findOne({
-              _id: new ObjectId(id),
-            });
-            if (!existing)
-              return res.status(404).json({ error: "Request not found" });
-            if (existing.requesterEmail !== req.user.email) {
-              return res
-                .status(403)
-                .json({ error: "You can only modify your own requests" });
-            }
-          }
-
-          const filter = { _id: new ObjectId(id) };
-          const updateDoc = {
-            $set: updates,
-          };
-          const result = await requestCollection.updateOne(filter, updateDoc);
-          res.json(result);
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    app.delete(
-      "/donation-requests/:id",
-      tokenVerify,
-      requireRole("admin", "donor"),
-      async (req, res) => {
-        try {
-          const id = req.params.id;
-
-          if (req.user.role === "donor") {
-            const existing = await requestCollection.findOne({
-              _id: new ObjectId(id),
-            });
-            if (!existing)
-              return res.status(404).json({ error: "Request not found" });
-            if (existing.requesterEmail !== req.user.email) {
-              return res
-                .status(403)
-                .json({ error: "You can only modify your own requests" });
-            }
-          }
-
-          const query = { _id: new ObjectId(id) };
-          const result = await requestCollection.deleteOne(query);
-          res.json(result);
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-
-    app.post("/create-payment-intent", tokenVerify, async (req, res) => {
-      try {
-        const { amount } = req.body;
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(amount * 100), // in cents
-          currency: "usd",
-          payment_method_types: ["card"],
-        });
-        res.json({ clientSecret: paymentIntent.client_secret });
-      } catch (error) {
-        console.error("Stripe payment intent creation error:", error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    app.post("/funding", tokenVerify, async (req, res) => {
-      try {
-        const fundingData = req.body;
-        const result = await fundingCollection.insertOne(fundingData);
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    app.get("/funding", tokenVerify, async (req, res) => {
-      try {
-        const result = await fundingCollection
-          .find()
-          .sort({ _id: -1 })
-          .toArray();
-        res.json(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    // Contact form submission (Public)
-    app.post("/contact", async (req, res) => {
-      try {
-        const { name, email, message } = req.body;
-        if (!name || !email || !message) {
-          return res.status(400).json({ error: "All fields are required" });
-        }
-        const contactCollection = db.collection("contact_messages");
-        await contactCollection.insertOne({
-          name,
-          email,
-          message,
-          createdAt: new Date(),
-        });
-        res.json({ success: true, message: "Message received successfully" });
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-
-    app.get(
-      "/admin-stats",
-      tokenVerify,
-      requireRole("admin", "volunteer"),
-      async (req, res) => {
-        try {
-          const usersCount = await userCollection.countDocuments({
-            role: "donor",
-          });
-          const requestsCount = await requestCollection.countDocuments();
-
-          // Sum total funding
-          const fundsData = await fundingCollection.find().toArray();
-          const totalFunds = fundsData.reduce(
-            (sum, item) => sum + (item.amount || 0),
-            0,
-          );
-
-          //---
-          // Get requests count by day for chart representation using real MongoDB aggregation
-          const sevenDaysAgo = new Date();
-          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-          const chartRaw = await requestCollection
-            .aggregate([
-              { $match: { createdAt: { $gte: sevenDaysAgo } } },
-              {
-                $group: {
-                  _id: { $dayOfWeek: "$createdAt" },
-                  requests: { $sum: 1 },
-                },
-              },
-              { $sort: { _id: 1 } },
-            ])
-            .toArray();
-
-          const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-          const chartData = chartRaw.map((d) => ({
-            name: dayNames[d._id - 1],
-            requests: d.requests,
-          }));
-
-          res.json({
-            users: usersCount,
-            funds: totalFunds,
-            requests: requestsCount,
-            chartData,
-          });
-        } catch (error) {
-          console.error(error);
-          res.status(500).json({ error: "Internal server error" });
-        }
-      },
-    );
-  } finally {
+    res.status(500).json({ error: "Internal server error" });
   }
-}
+});
 
-run().catch(console.dir);
+// Search active donors (Public)
+app.get("/donors", async (req, res) => {
+  await initDb();
+  try {
+    const { bloodGroup, district, upazila } = req.query;
+    let query = {
+      role: "donor",
+      status: "active",
+    };
 
-//---
+    if (bloodGroup) query.bloodGroup = bloodGroup;
+    if (district) query.district = district;
+    if (upazila) query.upazila = upazila;
+
+    const result = await userCollection.find(query).toArray();
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get current user details (Private)
+app.get("/users/me", tokenVerify, async (req, res) => {
+  await initDb();
+  try {
+    const email = req.user.email;
+    const user = await userCollection.findOne({ email });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// User registration (Public)
+app.post("/users", async (req, res) => {
+  await initDb();
+  try {
+    const { email, name, bloodGroup, district, upazila, image } = req.body;
+    const existing = await userCollection.findOne({ email });
+    if (existing) return res.json({ message: "User already exists" });
+    const newUser = {
+      email,
+      name,
+      bloodGroup,
+      district,
+      upazila,
+      image,
+      role: "donor",
+      status: "active",
+      createdAt: new Date(),
+    };
+    const result = await userCollection.insertOne(newUser);
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get specific user details (Admin Only)
+app.get(
+  "/users/:id",
+  tokenVerify,
+  requireRole("admin"),
+  async (req, res) => {
+    await initDb();
+    try {
+      const { id } = req.params;
+      const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id };
+      const user = await userCollection.findOne(filter);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      res.json(user);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// Get all users (Admin Only)
+app.get("/users", tokenVerify, requireRole("admin"), async (req, res) => {
+  await initDb();
+  try {
+    const { status } = req.query;
+    let query = {};
+    if (status && status !== "all") {
+      query.status = status;
+    }
+    const result = await userCollection.find(query).toArray();
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Block/unblock user (Admin Only)
+app.patch(
+  "/users/:id/status",
+  tokenVerify,
+  requireRole("admin"),
+  async (req, res) => {
+    await initDb();
+    try {
+      const id = req.params.id;
+      const { status } = req.body;
+      const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id };
+      const updateDoc = {
+        $set: { status: status },
+      };
+      const result = await userCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// Change user role (Admin Only)
+app.patch(
+  "/users/:id/role",
+  tokenVerify,
+  requireRole("admin"),
+  async (req, res) => {
+    await initDb();
+    try {
+      const id = req.params.id;
+      const { role } = req.body;
+      const filter = ObjectId.isValid(id) ? { $or: [{ _id: id }, { _id: new ObjectId(id) }] } : { _id: id };
+      const updateDoc = {
+        $set: { role: role },
+      };
+      const result = await userCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// Update user profile info (Private)
+app.patch("/users/update-profile", tokenVerify, async (req, res) => {
+  await initDb();
+  try {
+    const { userId, name, bloodGroup, district, upazila, image } = req.body;
+    if (userId !== req.user.id && userId !== req.user.sub) {
+      return res.status(403).json({ error: "You can only update your own profile" });
+    }
+    const filter = ObjectId.isValid(userId) ? { $or: [{ _id: userId }, { _id: new ObjectId(userId) }] } : { _id: userId };
+    const updateDoc = {
+      $set: {
+        name,
+        bloodGroup,
+        district,
+        upazila,
+        image,
+      },
+    };
+    const result = await userCollection.updateOne(filter, updateDoc);
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/donation-requests", tokenVerify, async (req, res) => {
+  await initDb();
+  try {
+    const requestData = { ...req.body, createdAt: new Date() };
+
+    const user = await userCollection.findOne({
+      email: requestData.requesterEmail,
+    });
+    if (user && user.status === "blocked") {
+      return res.status(403).json({
+        error: "Blocked users are restricted from creating requests.",
+      });
+    }
+
+    const result = await requestCollection.insertOne(requestData);
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/donation-requests/recent", tokenVerify, async (req, res) => {
+  await initDb();
+  try {
+    const { email } = req.query;
+    const query = { requesterEmail: email };
+    const result = await requestCollection
+      .find(query)
+      .sort({ _id: -1 })
+      .limit(3)
+      .toArray();
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/donation-requests/my-requests", tokenVerify, async (req, res) => {
+  await initDb();
+  try {
+    const { email, status, page = 1, limit = 5 } = req.query;
+    let query = { requesterEmail: email };
+
+    if (status && status !== "all") {
+      query.donationStatus = status;
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const count = await requestCollection.countDocuments(query);
+    const requests = await requestCollection
+      .find(query)
+      .sort({ _id: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .toArray();
+
+    res.json({
+      requests,
+      totalPages: Math.ceil(count / parseInt(limit)),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get(
+  "/donation-requests/all-requests",
+  tokenVerify,
+  requireRole("admin", "volunteer"),
+  async (req, res) => {
+    await initDb();
+    try {
+      const { status, page = 1, limit = 5 } = req.query;
+      let query = {};
+
+      if (status && status !== "all") {
+        query.donationStatus = status;
+      }
+
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const count = await requestCollection.countDocuments(query);
+      const requests = await requestCollection
+        .find(query)
+        .sort({ _id: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .toArray();
+
+      res.json({
+        requests,
+        totalPages: Math.ceil(count / parseInt(limit)),
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+app.get("/donation-requests/:id", async (req, res) => {
+  await initDb();
+  try {
+    const id = req.params.id;
+    const query = { _id: new ObjectId(id) };
+    const result = await requestCollection.findOne(query);
+    if (!result) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.patch(
+  "/donation-requests/:id/status",
+  tokenVerify,
+  async (req, res) => {
+    await initDb();
+    try {
+      const id = req.params.id;
+      const { status } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: { donationStatus: status },
+      };
+      const result = await requestCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+app.patch(
+  "/donation-requests/:id/donate",
+  tokenVerify,
+  async (req, res) => {
+    await initDb();
+    try {
+      const id = req.params.id;
+      const { donorName, donorEmail, donationStatus } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          donorName,
+          donorEmail,
+          donationStatus,
+        },
+      };
+      const result = await requestCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+app.patch(
+  "/donation-requests/:id",
+  tokenVerify,
+  requireRole("admin", "donor"),
+  async (req, res) => {
+    await initDb();
+    try {
+      const id = req.params.id;
+      const updates = req.body;
+
+      if (req.user.role === "donor") {
+        const existing = await requestCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!existing)
+          return res.status(404).json({ error: "Request not found" });
+        if (existing.requesterEmail !== req.user.email) {
+          return res
+            .status(403)
+            .json({ error: "You can only modify your own requests" });
+        }
+      }
+
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: updates,
+      };
+      const result = await requestCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+app.delete(
+  "/donation-requests/:id",
+  tokenVerify,
+  requireRole("admin", "donor"),
+  async (req, res) => {
+    await initDb();
+    try {
+      const id = req.params.id;
+
+      if (req.user.role === "donor") {
+        const existing = await requestCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!existing)
+          return res.status(404).json({ error: "Request not found" });
+        if (existing.requesterEmail !== req.user.email) {
+          return res
+            .status(403)
+            .json({ error: "You can only modify your own requests" });
+        }
+      }
+
+      const query = { _id: new ObjectId(id) };
+      const result = await requestCollection.deleteOne(query);
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+app.post("/create-payment-intent", tokenVerify, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(amount * 100),
+      currency: "usd",
+      payment_method_types: ["card"],
+    });
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (error) {
+    console.error("Stripe payment intent creation error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/funding", tokenVerify, async (req, res) => {
+  await initDb();
+  try {
+    const fundingData = req.body;
+    const result = await fundingCollection.insertOne(fundingData);
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/funding", tokenVerify, async (req, res) => {
+  await initDb();
+  try {
+    const result = await fundingCollection
+      .find()
+      .sort({ _id: -1 })
+      .toArray();
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Contact form submission (Public)
+app.post("/contact", async (req, res) => {
+  await initDb();
+  try {
+    const { name, email, message } = req.body;
+    if (!name || !email || !message) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+    const contactCollection = db.collection("contact_messages");
+    await contactCollection.insertOne({
+      name,
+      email,
+      message,
+      createdAt: new Date(),
+    });
+    res.json({ success: true, message: "Message received successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get(
+  "/admin-stats",
+  tokenVerify,
+  requireRole("admin", "volunteer"),
+  async (req, res) => {
+    await initDb();
+    try {
+      const usersCount = await userCollection.countDocuments({
+        role: "donor",
+      });
+      const requestsCount = await requestCollection.countDocuments();
+
+      const fundsData = await fundingCollection.find().toArray();
+      const totalFunds = fundsData.reduce(
+        (sum, item) => sum + (item.amount || 0),
+        0,
+      );
+
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const chartRaw = await requestCollection
+        .aggregate([
+          { $match: { createdAt: { $gte: sevenDaysAgo } } },
+          {
+            $group: {
+              _id: { $dayOfWeek: "$createdAt" },
+              requests: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ])
+        .toArray();
+
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const chartData = chartRaw.map((d) => ({
+        name: dayNames[d._id - 1],
+        requests: d.requests,
+      }));
+
+      res.json({
+        users: usersCount,
+        funds: totalFunds,
+        requests: requestsCount,
+        chartData,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
 app.get("/", (req, res) => {
   res.send("LifeStream Server is Running!");
 });
 
-app.listen(port, () => {
-  console.log(`LifeStream Server listening on http://localhost:${port}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`LifeStream Server listening on http://localhost:${port}`);
+  });
+}
+
+module.exports = app;
